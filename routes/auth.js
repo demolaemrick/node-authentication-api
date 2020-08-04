@@ -1,56 +1,93 @@
-require('dotenv').config()
+require("dotenv").config();
 
 const router = require("express").Router();
 const User = require("../model/User");
-const jwt = require('jsonwebtoken')
+const jwt = require("jsonwebtoken");
 const { registerValidation, loginValidation } = require("../validation");
 const bcrypt = require("bcrypt");
+const saltRounds = 10;
 
-router.post("/register", async (req, res) => {
+/////////////////////////////////////////// REGISTER ////////////////////////////////////////////////////
+router.post("/register", (req, res) => {
+  const { name, email, password } = req.body;
   //validate the data before creating a user
   const { error } = registerValidation(req.body);
   if (error) return res.status(400).send(error.details[0].message);
 
-  //Hashing password
-  const salt = await bcrypt.genSalt(10);
-  const hashedPassword = await bcrypt.hash(req.body.password, salt);
-
   //check if user already exist.
-  User.findOne({ email: req.body.email }, (err, foundUser) => {
-    if (foundUser) return res.status(400).json({ msg: "User Already exist." });
-    const user = new User({
-      name: req.body.name,
-      email: req.body.email,
-      password: hashedPassword,
+  User.findOne({ email }, (err, user) => {
+    if (user) return res.status(400).json({ msg: "User Already exist." });
+    //create a new user
+    bcrypt.hash(password, saltRounds, (err, hash) => {
+      if (err) throw err;
+      // Store hash in your password DB.
+      const newUser = new User({
+        name: req.body.name,
+        email: req.body.email,
+        password: hash,
+      });
+      newUser
+        .save()
+        .then((user) => {
+          jwt.sign(
+            { id: user._id },
+            process.env.TOKEN_SECRET,
+            { expiresIn: 3600 },
+            (err, token) => {
+              if (err) throw err;
+              res.send({
+                token,
+                user: {
+                  id: user._id,
+                  name: user.name,
+                  email: user.email,
+                },
+              });
+            }
+          );
+        })
+        .catch((error) => {
+          res.status(400).send(error);
+        });
     });
-    user
-      .save()
-      .then((response) => { res.send({ name: response.name, email: response.email })})
-      .catch((error) => {res.status(400).send(error) });
   });
 });
 
-//login
+/////////////////////////////////////////// LOGIN ////////////////////////////////////////////////////
 router.post("/login", (req, res) => {
+  const { name, email, password } = req.body;
   //validate the data before creating a user
   const { error } = loginValidation(req.body);
   if (error) return res.status(400).send(error.details[0].message);
 
   //check if user already exist.
-  User.findOne({ email: req.body.email }, (err, foundUser) => {
-    if(err) console.log(err)
+  User.findOne({ email }, (err, user) => {
+    if (err) console.log(err);
 
     //note there might be some weird result if you don't check for user not found first.
-    if(!foundUser) return res.status(400).send('User not found.');
+    if (!user) return res.status(400).send("User Does not exist.");
     //check password
-    bcrypt.compare(req.body.password, foundUser.password, function(err, result) {
-        // if result == true that means there is password match
-        if(result){
-        //   res.send(`${foundUser.name} has successfully logged in!`)
-          const token = jwt.sign({_id: foundUser._id}, process.env.TOKEN_SECRET)
-          res.header('auth-token', token).send(token)
-        }else{ return res.send('Invalid credentials') }
-      });
+    bcrypt.compare(password, user.password, (err, isMatch) => {
+      // if isMatch(result) == true that means there is password match
+      if (!isMatch) return res.status(400).send("Invalid credentials");
+      // res.send(`${foundUser.name} has successfully logged in!`)
+      jwt.sign(
+        { id: user._id },
+        process.env.TOKEN_SECRET,
+        { expiresIn: 3600 },
+        (err, token) => {
+          if (err) throw err;
+          res.send({
+            token,
+            user: {
+              id: user._id,
+              name: user.name,
+              email: user.email,
+            },
+          });
+        }
+      );
+    });
   });
 });
 
